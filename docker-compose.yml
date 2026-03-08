@@ -1,0 +1,96 @@
+#docker compose up -d --build
+
+#docker compose --profile chat --profile embedding --profile tts --profile stt  up -d
+
+x-gpu-reservation: &gpu-reservation
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: 1
+            capabilities: [gpu]
+
+services:
+
+  control:
+    image: control-plane:latest
+    container_name: control
+    runtime: nvidia
+    build: ./services/control
+    ports:
+      - "${CONTROL_PORT}:${CONTROL_PORT}"
+    env_file:
+      - .env
+    volumes:
+      - ${IN_DOCKER_USE_DOCKER}
+      - ${ENV_PATH}:/app/.env
+      - ${COMPOSE_STATE_PATH}:/app/app/static/app/compose_state.json
+      - ${CHAT_MODEL_PATH}:/app/models/chat
+      - ${EMBEDDING_MODEL_PATH}:/app/models/embedding
+      - ${TTS_MODEL_PATH}:/app/models/tts
+      - ${STT_MODEL_PATH}:/app/models/stt
+
+  chat:
+    image: vllm/vllm-openai:latest
+    container_name: chat
+    <<: *gpu-reservation
+    volumes:
+      - ${CHAT_MODEL_PATH}:/root/.cache/huggingface
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - TRANSFORMERS_CACHE=/root/.cache/huggingface
+      - TORCH_HOME=/root/.cache/huggingface
+    command:
+      [
+        "${CHAT_MODEL}",
+        "--gpu-memory-utilization", "${CHAT_GPU_UTIL}",
+        "--enable-chunked-prefill",
+        "--dtype", "float16",
+        "--disable-frontend-multiprocessing",
+        "--trust-remote-code"
+      ]
+    profiles: ["chat"]
+
+  embedding:
+    image: embedding-openai:latest
+    container_name: embedding
+    build: ./services/embedding
+    <<: *gpu-reservation
+    environment:
+      - MODEL_PATH=${EMBEDDING_MODEL_PATH}
+      - HF_HOME=/root/.cache/huggingface
+      - TRANSFORMERS_CACHE=/root/.cache/huggingface
+      - TORCH_HOME=/root/.cache/huggingface
+    volumes:
+      - ${EMBEDDING_MODEL_PATH}:/root/.cache/huggingface
+    profiles: ["embedding"]
+
+  tts:
+    image: cosyvoice-openai:latest
+    container_name: tts
+    build: ./services/tts
+    <<: *gpu-reservation
+    environment:
+      - PRELOAD_MODELS=${TTS_MODEL}
+      - HF_HOME=/root/.cache/huggingface
+      - TRANSFORMERS_CACHE=/root/.cache/huggingface
+      - TORCH_HOME=/root/.cache/huggingface
+    volumes:
+      - ${TTS_MODEL_PATH}:/root/.cache/huggingface
+      - ${TTS_ASSET_PATH}:/workspace/CosyVoice/asset
+    profiles: ["tts"]
+
+  stt:
+    image: fasterwhisper-openai:latest
+    container_name: stt
+    build: ./services/stt
+    <<: *gpu-reservation
+    environment:
+      - WHISPER__MODEL=${STT_MODEL}
+      - HF_HOME=/root/.cache/huggingface
+      - TRANSFORMERS_CACHE=/root/.cache/huggingface
+      - TORCH_HOME=/root/.cache/huggingface
+    volumes:
+      - ${STT_MODEL_PATH}:/root/.cache/huggingface
+    profiles: ["stt"]

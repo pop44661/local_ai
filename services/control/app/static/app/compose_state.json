@@ -1,0 +1,42 @@
+{
+  "Chat": {
+    "exists": false,
+    "running": false,
+    "model": {
+      "list": [
+        
+      ],
+      "use": "Qwen2.5/Qwen2.5-7B-Instruct-GPTQ-Int8"
+    }
+  },
+  "Embedding": {
+    "exists": false,
+    "running": false,
+    "model": {
+      "list": [
+        
+      ],
+      "use": "infly/inf-retriever-v1-1.5b"
+    }
+  },
+  "STT": {
+    "exists": false,
+    "running": false,
+    "model": {
+      "list": [
+        
+      ],
+      "use": "Systran/faster-distil-whisper-large-v3"
+    }
+  },
+  "TTS": {
+    "exists": false,
+    "running": false,
+    "model": {
+      "list": [
+        
+      ],
+      "use": "FunAudioLLM/CosyVoice2-0.5B"
+    }
+  }
+}

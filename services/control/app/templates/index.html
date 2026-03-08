@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Django SPA Layout</title>
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+
+    {% load static %}
+
+    <link rel="stylesheet" href="{% static 'app/style.css' %}">
+</head>
+
+<body>
+
+<div id="layout">
+
+<!-- LEFT -->
+<div id="content"></div>
+
+<!-- RIGHT -->
+<div id="sidebar">
+
+<div id="nav">
+<h2>Local-AI</h2>
+</div>
+
+<div id="log-panel">
+
+<div id="log-header">
+<span>訊息顯示</span>
+<button id="gpuButton" class="icon-btn">
+    <i class="material-icons">developer_board</i>
+    <span class="tooltip-text">GPU用量</span>
+</button>
+</div>
+
+<div id="log-content">
+<p>系統尚未啟動</p>
+</div>
+
+</div>
+
+</div>
+
+</div>
+
+<div id="modelDialog" class="modal" style="display: none;">
+<div class="modal-content">
+<span class="close-btn" onclick="closeModelDialog()">&times;</span>
+<h3>管理模型</h3>
+<div style="display: flex; gap: 10px;">
+<input style="flex: 1;" type="text" id="modelInput" placeholder="輸入模型名稱">
+<button class="icon-btn" onclick="addModel()">
+<i class="material-icons">download</i>
+<span class="tooltip-text">下載</span>
+</button>
+</div>
+<ul id="modelList"></ul>
+<div class="pagination">
+<button id="prevBtn" class="icon-btn">
+<i class="material-icons">chevron_left</i>
+<span class="tooltip-text">上一頁</span>
+</button>
+<button id="nextBtn" class="icon-btn">
+<i class="material-icons">chevron_right</i>
+<span class="tooltip-text">下一頁</span>
+</button>
+</div>
+</div>
+</div>
+
+<script>
+
+/* ---------------- LOG ---------------- */
+
+function addLog(msg){
+
+const log=document.getElementById("log-content");
+
+const p=document.createElement("p");
+p.textContent=msg;
+
+log.appendChild(p);
+log.scrollTop=log.scrollHeight;
+
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+    renderComposePage();
+});
+
+/* ---------------- GPU ---------------- */
+
+document.getElementById("gpuButton").onclick = async () => {
+
+    const res = await fetch("/api/gpu/");
+    const data = await res.json();
+
+    if(data.error){
+        addLog("GPU讀取失敗");
+        return;
+    }
+
+    addLog("GPU使用率：" + data.usage + "%");
+    addLog("GPU記憶體：" + data.memory_used + "MB / " + data.memory_total + "MB");
+
+};
+
+/* ---------------- STATE ---------------- */
+
+const composeState = {{ compose_state|safe }};
+
+/* ---------------- COMPOSE PAGE ---------------- */
+
+function renderComposePage(){
+
+    const content=document.getElementById("content");
+
+    const running = Object.values(composeState).some(s => s.running);
+
+    content.innerHTML=`
+    
+    <div class="compose-card">
+
+    <div class="compose-title">
+
+    <h2>Compose</h2>
+
+    <button class="icon-btn" onclick="toggleCompose()">
+        <i class="material-icons">${running ? "stop" : "power_settings_new"}</i>
+        <span class="tooltip-text">${running ? "停止Compose" : "開啟Compose"}</span>
+    </button>
+
+    </div>
+
+    <div class="compose-content">
+
+    <div class="compose-grid">
+
+    ${renderServiceCard("Chat")}
+    ${renderServiceCard("Embedding")}
+    ${renderServiceCard("STT")}
+    ${renderServiceCard("TTS")}
+
+    </div>
+
+    </div>
+
+    </div>
+
+    `;
+
+}
+
+async function toggleCompose() {
+
+    const running = Object.values(composeState).some(s => s.running);
+    const servicesToToggle = Object.keys(composeState).filter(s => composeState[s].exists);
+    if (servicesToToggle.length === 0) {
+        addLog("沒有已啟用的服務可以操作");
+        return;
+    }
+
+    const servicesStr = servicesToToggle.map(s => s.toLowerCase()).join(" ");
+    const api = running
+        ? `/api/docker/down/?service=${servicesStr}`
+        : `/api/docker/up/?service=${servicesStr}`;
+
+    addLog(`正在 ${running ? "停止" : "啟動"} Compose...`);
+
+    try {
+        const resDocker = await fetch(api);
+        const dataDocker = await resDocker.json();
+        
+        if (!dataDocker.results || !Array.isArray(dataDocker.results)) {
+            addLog("Docker API 回傳格式錯誤: " + JSON.stringify(dataDocker));
+            return;
+        }
+
+        for (let r of dataDocker.results) {
+            let service = r.service.length === 3
+                ? r.service.toUpperCase()
+                : r.service.charAt(0).toUpperCase() + r.service.slice(1);
+            const prevState = composeState[service].running;
+
+            if (r.success) {
+                composeState[service].exists = !running;
+                composeState[service].running = !running;
+            } else {
+                addLog(`Docker Error (${service}): ${r.error}`);
+                continue; 
+            }
+
+            try {
+                const resState = await fetch("/api/compose_state/", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ service, exists: composeState[service].exists, running: composeState[service].running }),
+                });
+                const dataState = await resState.json();
+
+                if (dataState.success) {
+                    addLog(`${service} 已 ${composeState[service].running ? "啟動" : "停止"}`);
+                } else {
+                    addLog(`同步失敗 (${service}): ${dataState.error}`);
+                    composeState[service].exists = prevState; 
+                    composeState[service].running = prevState;
+                }
+            } catch (err) {
+                addLog(`Fetch Error (${service}): ${err}`);
+                composeState[service].exists = prevState; 
+                composeState[service].running = prevState;
+            }
+        }
+
+        renderComposePage();
+
+    } catch (err) {
+        addLog("Fetch Error: " + err);
+    }
+}
+
+/* ---------------- SERVICE CARD ----------------*/
+function renderServiceCard(name) {
+  const s = composeState[name];
+
+  return `
+    <div class="service-card">
+      <!-- Header: 標題 + toggle + 按鈕 -->
+      <div class="service-card-header">
+        <h3>${name}</h3>
+        <label class="switch">
+          <input id="chk-${name.toLowerCase()}" type="checkbox" ${s.exists ? "checked" : ""} onchange="updateServiceState('${name}', this.checked)">
+          <span class="slider"></span>
+          <span class="tooltip-text">啟用/停用${name}</span>
+        </label>
+      </div>
+
+      <!-- Body: 狀態、模型、GPU -->
+      <div class="service-card-body">
+        <div class="status-row">
+          <span class="label">狀態：</span>
+          <span class="value">${s.running ? "運行中" : "未啟動"}</span>
+          <button class="icon-btn" onclick="restartService('${name}')">
+            <i class="material-icons">refresh</i>
+            <span class="tooltip-text">重啟${name}服務</span>
+          </button>
+        </div>
+
+        <div class="status-row">
+          <span class="label">模型：</span>
+          <span class="value">${s.model.use}</span>
+          <button class="icon-btn" onclick="openModelDialog('${name}')">
+            <i class="material-icons">edit</i>
+            <span class="tooltip-text">設定${name}模型</span>
+          </button>
+        </div>
+
+        <div class="status-row">
+          <span class="label">GPU：</span>
+          <span class="value" id="gpu-${name.toLowerCase()}">-GB / -GB (-%)</span>
+          <!--
+          <button class="icon-btn">
+            <i class="material-icons">edit</i>
+            <span class="tooltip-text">設定${name}GPU</span>
+          </button>
+          -->
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function updateAllGPU() {
+    const servicesToCheck = Object.keys(composeState).filter(s => composeState[s].exists);
+    if (servicesToCheck.length === 0) return;
+
+    fetch("/api/container_gpu_stats/")
+        .then(res => res.json())
+        .then(data => {
+            if (!data.success) {
+                console.error("GPU API error:", data.error);
+                return;
+            }
+
+            servicesToCheck.forEach(service => {
+                const info = data.data[service];
+                const span = document.getElementById(`gpu-${service.toLowerCase()}`);
+                if (!span) return;
+
+                if (!info || info.error) {
+                    span.textContent = "-GB / -GB (-%)";
+                } else {
+                    span.textContent = info;
+                }
+            });
+        })
+        .catch(err => console.error(err));
+}
+
+setInterval(updateAllGPU, 3000);
+
+function checkServiceStatus() {
+
+    fetch("/api/container_status/")
+        .then(res => res.json())
+        .then(data => {
+            if (!data.success) {
+                console.error("Status API Error:", data.error);
+                return;
+            }
+
+            Object.entries(data.data).forEach(([service, info]) => {
+                composeState[service].running = info.running;
+            });
+        })
+        .catch(err => console.error(err));
+}
+
+setInterval(checkServiceStatus(), 21000);
+
+async function restartService(service) {
+    
+    if (!composeState[service] || !composeState[service].running) {
+        addLog(`${service} 不存在或未啟用，無法重啟`);
+        return;
+    }
+
+    addLog(`正在重啟 ${service} 服務...`);
+
+    try {
+        const res = await fetch(`/api/restart/service/?service=${service}`);
+        const data = await res.json();
+
+        if (data.success) {
+            addLog(data.message);
+        } else {
+            addLog(`重啟失敗: ${data.error}`);
+        }
+    } catch (err) {
+        addLog(`Fetch Error: ${err}`);
+    }
+}
+
+/* ---------------- MODEL CHANGE ---------------- */
+
+async function updateServiceState(service, checked) {
+    const checkbox = document.getElementById(`chk-${service.toLowerCase()}`);
+
+    const prevState = composeState[service].exists;
+
+    checkbox.disabled = true;
+
+    composeState[service].exists = checked;
+    composeState[service].running = checked;
+    let error = false;
+
+    const api = checked
+        ? `/api/docker/up/?service=${service.toLowerCase()}`
+        : `/api/docker/down/?service=${service.toLowerCase()}`;
+
+    try {
+        const resDocker = await fetch(api);
+        const dataDocker = await resDocker.json();
+
+        if (dataDocker.results && Array.isArray(dataDocker.results)) {
+            dataDocker.results.forEach(r => {
+                if (r.success) ;//addLog(JSON.stringify(r));
+                else addLog(`Docker Error (${r.service}): ${r.error}`);
+            });
+            error = dataDocker.results.some(r => !r.success);
+        } else {
+            addLog("Docker API 回傳格式錯誤: " + JSON.stringify(dataDocker));
+            error = true;
+        }
+
+        renderComposePage();
+    } catch (err) {
+        addLog("Fetch Error: " + err);
+        composeState[service].exists = prevState;
+        error = true;
+        renderComposePage();
+    }
+
+    if (!error) {
+        try {
+            const resState = await fetch("/api/compose_state/", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ service, exists: checked, running: checked }),
+            });
+            const dataState = await resState.json();
+
+            if (dataState.success) addLog(`${service} 已 ${checked ? "啟用" : "停用"}`);
+            else {
+                addLog(`同步失敗: ${dataState.error}`);
+                composeState[service].exists = prevState;
+                composeState[service].running = prevState;
+            }
+        } catch (err) {
+            addLog(`Fetch Error: ${err}`);
+            composeState[service].exists = prevState;
+            composeState[service].running = prevState;
+        }
+    }
+
+    checkbox.disabled = false;
+}
+
+function updateModelState(service, model) {
+    composeState[service].model = model;
+    addLog(`${service} 模型切換為 ${model}`);
+
+    fetch("/api/compose_state/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            service: service,
+            model: model
+        }),
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) addLog(`${service} 模型同步成功`);
+        else addLog(`同步失敗: ${data.error}`);
+    })
+    .catch(err => addLog(`Fetch Error: ${err}`));
+}
+
+
+
+
+
+let currentService = "";
+let currentModel = ""
+let models = [];
+let page = 0;
+const pageSize = 5;
+
+function openModelDialog(service) {
+    currentService = service;
+    page = 0;
+    document.getElementById("modelDialog").style.display = "flex";
+    fetchModels();
+}
+
+function closeModelDialog() {
+    document.getElementById("modelDialog").style.display = "none";
+}
+
+// 避免點擊背景自動關閉
+document.getElementById("modelDialog").addEventListener("click", (e) => {
+    if (e.target === document.getElementById("modelDialog")) {
+        // 什麼都不做，點擊背景不關閉
+    }
+});
+
+function fetchModels() {
+    fetch(`/api/models/get/?service=${currentService}`)
+        .then(res => res.json())
+        .then(data => {
+            models = data.list;
+            currentModel = data.use;
+            renderList();
+        });
+}
+
+function renderList() {
+    const ul = document.getElementById("modelList");
+    ul.innerHTML = ""; // 清空列表
+
+    const start = page * pageSize;
+    const end = start + pageSize;
+    const pageModels = models.slice(start, end);
+
+    pageModels.forEach(model => {
+        // 判斷是否為當前使用模型
+        const isCurrent = model === currentModel;
+        const selectColor = isCurrent ? "#4CAF50" : "#ccc";
+        const selectTextColor = isCurrent ? "#fff" : "#333";
+
+        // 使用 template literal 建立 HTML
+        ul.innerHTML += `
+            <li style="display: flex; align-items: center; margin-bottom: 6px;">
+                <span style="flex: 1;">${model}</span>
+                <span style="display: flex; align-items: center; gap: 10px;">
+                <button 
+                    class="select-model-btn"
+                    style="
+                        margin-bottom: 0px;
+                        border-radius: 6px;
+                        border: none;
+                        cursor: pointer;
+                        font-size: 12px;
+                        background-color: ${selectColor};
+                        color: ${selectTextColor};
+                    "
+                    onclick="selectModel('${model}')"
+                >使用</button>
+                <button
+                    class="delete-model-btn"
+                    style="
+                        margin-bottom: 0px;
+                        border-radius: 6px;
+                        border: none;
+                        cursor: pointer;
+                        font-size: 12px;
+                        background-color: #f44336;
+                        color: #fff;
+                    "
+                    onclick="deleteModel('${model}')"
+                >刪除</button>
+                <span>
+            </li>
+        `;
+    });
+}
+
+// 將原本 inline onclick 的 fetch 邏輯抽出
+function selectModel(model) {
+    fetch("/api/models/select/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ service: currentService, model_name: model })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            currentModel = model; // 更新目前模型
+            renderList(); // 重新渲染列表顏色
+            addLog(data.message);
+        } else {
+            addLog(`錯誤: ${data.error}`);
+        }
+    });
+}
+
+document.getElementById("prevBtn").onclick = () => {
+    if (page > 0) page--;
+    renderList();
+};
+
+document.getElementById("nextBtn").onclick = () => {
+    if ((page + 1) * pageSize < models.length) page++;
+    renderList();
+};
+
+function addModel() {
+    const modelName = document.getElementById("modelInput").value.trim();
+    if (!modelName) return alert("請輸入模型名稱");
+
+    fetch("/api/models/download/", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({service: currentService, model_name: modelName})
+    })
+    .then(res => res.json())
+    .then(data => {
+        models = data.list;
+        renderList();
+        alert(data.message);
+    });
+}
+
+function deleteModel(modelName) {
+    fetch("/api/models/delete/", {
+        method: "DELETE",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({service: currentService, model_name: modelName})
+    })
+    .then(res => res.json())
+    .then(data => {
+        models = data.list;
+        renderList();
+        alert(data.message);
+    });
+}
+</script>
+
+</body>
+</html>

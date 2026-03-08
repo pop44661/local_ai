@@ -1,0 +1,7 @@
+django>=4.2
+djangorestframework
+huggingface_hub
+pyyaml
+psutil
+docker
+requests>=2.31
