@@ -4,18 +4,16 @@
     "running": false,
     "model": {
       "list": [
-        
+        "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int8"
       ],
-      "use": "Qwen2.5/Qwen2.5-7B-Instruct-GPTQ-Int8"
+      "use": "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int8"
     }
   },
   "Embedding": {
     "exists": false,
     "running": false,
     "model": {
-      "list": [
-        
-      ],
+      "list": [],
       "use": "infly/inf-retriever-v1-1.5b"
     }
   },
@@ -23,9 +21,7 @@
     "exists": false,
     "running": false,
     "model": {
-      "list": [
-        
-      ],
+      "list": [],
       "use": "Systran/faster-distil-whisper-large-v3"
     }
   },
@@ -33,9 +29,7 @@
     "exists": false,
     "running": false,
     "model": {
-      "list": [
-        
-      ],
+      "list": [],
       "use": "FunAudioLLM/CosyVoice2-0.5B"
     }
   }

@@ -178,6 +178,8 @@ def select_model_api(request):
 import docker
 client = docker.from_env()
 from huggingface_hub import hf_hub_download, snapshot_download
+from huggingface_hub.utils import logging
+logging.set_verbosity_info()
 import shutil
 
 
@@ -474,7 +476,7 @@ def download_model_func(file_path, service: str, model_name: str):
         os.makedirs(service_folder, exist_ok=True)  # 建資料夾
 
         # 下載整個模型 repo（snapshot_download 會自動抓最新 commit）
-        snapshot_download(repo_id=model_name, cache_dir=service_folder, resume_download=True)
+        snapshot_download(repo_id=model_name, cache_dir=service_folder, local_dir_use_symlinks=False)
 
         return {"success": True, "message": f"{model_name} 已加入列表並下載完成", "list": model_list}
 
