@@ -522,22 +522,16 @@ def download_model_func(file_path, service: str, model_name: str):
 
 def download_model_three_method(service,name,dir):
     try:
-        if service == "Chat":
-            os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+        if service in ["Chat", "Embedding", "STT"]:
+            local_dir = os.path.join(dir, 'hub')
+            os.environ["HF_HOME"] = dir 
             snapshot_download(
-                repo_id=name, 
+                repo_id=name,
+                cache_dir=local_dir,
                 local_dir_use_symlinks=False
             )
-            os.environ.pop("HF_HUB_ENABLE_HF_TRANSFER", None)
-        elif service in ["Embedding", "STT"]:
-            os.environ["HF_HUB_DISABLE_XET"] = "1"
-            snapshot_download(
-                repo_id=name, 
-                cache_dir=dir,
-                local_dir_use_symlinks=False
-            )
-            os.environ.pop("HF_HUB_DISABLE_XET", None)
         elif service == "TTS":
+            os.environ["HF_HOME"] = dir
             local_dir = os.path.join(dir, name)
             snapshot_download(
                 repo_id=name,

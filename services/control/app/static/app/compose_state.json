@@ -3,9 +3,7 @@
     "exists": false,
     "running": false,
     "model": {
-      "list": [
-        "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int8"
-      ],
+      "list": [],
       "use": "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int8"
     }
   },
