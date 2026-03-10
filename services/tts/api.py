@@ -16,11 +16,6 @@ from flask import Flask, request, jsonify, Response, stream_with_context
 from opencc import OpenCC
 import uuid
 
-os.environ["HF_HOME"] = "/root/.cache/huggingface"
-os.environ["TRANSFORMERS_CACHE"] = "/root/.cache/huggingface"
-os.environ["TORCH_HOME"] = "/root/.cache/huggingface"
-
-
 cc = OpenCC('t2s') 
 
 # --- Flask App Initialization ---

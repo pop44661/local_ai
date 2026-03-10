@@ -14,9 +14,6 @@ except:
     GPTQ_AVAILABLE = False
 
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
-os.environ["HF_HOME"] = "/root/.cache/huggingface"
-os.environ["TRANSFORMERS_CACHE"] = "/root/.cache/huggingface"
-os.environ["TORCH_HOME"] = "/root/.cache/huggingface"
 
 MODEL_PATH = os.getenv(
     "MODEL_PATH",

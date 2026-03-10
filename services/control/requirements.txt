@@ -1,6 +1,8 @@
 django>=4.2
 djangorestframework
-huggingface_hub
+huggingface_hub[xet]
+hf-xet
+hf_transfer
 pyyaml
 psutil
 docker

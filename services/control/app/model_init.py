@@ -41,12 +41,33 @@ def download_model_func(file_path: str, service: str, model_name: str):
         os.makedirs(service_folder, exist_ok=True)  # 建資料夾
 
         # 下載整個模型 repo
-        snapshot_download(repo_id=model_name, cache_dir=service_folder, local_dir_use_symlinks=False)
+        download_model_three_method(service, model_name, service_folder)
 
         return {"success": True, "message": f"{model_name} 已加入列表並下載完成", "list": model_list}
 
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+def download_model_three_method(service,name,dir):
+    try:
+        if service in ["Chat", "Embedding", "STT"]:
+            local_dir = os.path.join(dir, 'hub')
+            os.environ["HF_HOME"] = dir 
+            snapshot_download(
+                repo_id=name,
+                cache_dir=local_dir,
+                local_dir_use_symlinks=False
+            )
+        elif service == "TTS":
+            os.environ["HF_HOME"] = dir
+            local_dir = os.path.join(dir, name)
+            snapshot_download(
+                repo_id=name,
+                local_dir=local_dir,
+                local_dir_use_symlinks=False
+            )
+    except:
+        return
 
 def init_models():
     """

@@ -162,6 +162,43 @@ def select_model_api(request):
     except Exception as e:
         return JsonResponse({"success": False, "error": str(e)}, status=500)
 
+@csrf_exempt
+def generate_license_api(request):
+    if request.method != "POST":
+        return JsonResponse({"success": False, "error": "POST required"}, status=400)
+
+    user = request.POST.get("user")
+    days = request.POST.get("days", 30)
+    features = request.POST.get("features", '[]')
+    private_key_file = request.FILES.get("private_key_file")
+
+    if not user or not private_key_file:
+        return JsonResponse({"success": False, "error": "Missing parameters"}, status=400)
+
+    try:
+        result = generate_license_request(private_key_file, user, days, features)
+    except requests.RequestException as e:
+        return JsonResponse({"success": False, "error": str(e)}, status=500)
+
+    return JsonResponse({"success": True, "upload_response": result})
+
+
+@csrf_exempt
+def upload_license_api(request):
+    if request.method != "POST":
+        return JsonResponse({"success": False, "error": "POST required"}, status=400)
+
+    license_file = request.FILES.get("file")
+    if not license_file:
+        return JsonResponse({"success": False, "error": "No file uploaded"}, status=400)
+
+    try:
+        result = upload_license_request(license_file)
+    except requests.RequestException as e:
+        return JsonResponse({"success": False, "error": str(e)}, status=500)
+
+    return JsonResponse({"success": True, "upload_response": result})
+
 
 
 
@@ -474,14 +511,41 @@ def download_model_func(file_path, service: str, model_name: str):
         base_path = "/app/models"  # Volume 掛載點
         service_folder = os.path.join(base_path, service.lower())
         os.makedirs(service_folder, exist_ok=True)  # 建資料夾
-
+        
         # 下載整個模型 repo（snapshot_download 會自動抓最新 commit）
-        snapshot_download(repo_id=model_name, cache_dir=service_folder, local_dir_use_symlinks=False)
+        download_model_three_method(service, model_name, service_folder)
 
         return {"success": True, "message": f"{model_name} 已加入列表並下載完成", "list": model_list}
 
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+def download_model_three_method(service,name,dir):
+    try:
+        if service == "Chat":
+            os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+            snapshot_download(
+                repo_id=name, 
+                local_dir_use_symlinks=False
+            )
+            os.environ.pop("HF_HUB_ENABLE_HF_TRANSFER", None)
+        elif service in ["Embedding", "STT"]:
+            os.environ["HF_HUB_DISABLE_XET"] = "1"
+            snapshot_download(
+                repo_id=name, 
+                cache_dir=dir,
+                local_dir_use_symlinks=False
+            )
+            os.environ.pop("HF_HUB_DISABLE_XET", None)
+        elif service == "TTS":
+            local_dir = os.path.join(dir, name)
+            snapshot_download(
+                repo_id=name,
+                local_dir=local_dir,
+                local_dir_use_symlinks=False
+            )
+    except:
+        return
 
 def delete_model_func(file_path, service: str, model_name: str):
     """刪除 model，使用中模型無法刪除，並移除 volume 內對應資料夾"""
@@ -619,20 +683,83 @@ def set_service_model_func(service: str, model_path: str):
 
 
 
-# OPENAI API
+# OPENAI API (其他服務) 
 import uuid
 import requests
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from django.http import StreamingHttpResponse, JsonResponse
+from rest_framework import status
 
 # Docker 內部服務對應 API
 SERVICE_MAP = {
+    "License" : "http://license:8000",
     "Chat": "http://chat:8000",
     "Embedding": "http://embedding:8000",
     "TTS": "http://tts:8000",
     "STT": "http://stt:8000",
 }
+
+def check_license(required_features: list[str]):
+    """
+    檢查 license 是否有效，以及是否包含需要的 features
+    """
+    def decorator(func):
+        def wrapper(self, request, *args, **kwargs):
+            try:
+                r = requests.get(f"{SERVICE_MAP['License']}/verify", timeout=5)
+                r.raise_for_status()
+                data = r.json()
+
+                if not data.get("valid"):
+                    return Response({"error": "License invalid"}, status=403)
+
+                features = data.get("features", [])
+                # 檢查所需 feature
+                missing = [f for f in required_features if f not in features]
+                if missing:
+                    return Response(
+                        {"error": f"Missing licensed feature(s): {missing}"},
+                        status=403
+                    )
+
+            except requests.exceptions.RequestException:
+                return Response({"error": "Cannot reach license server"}, status=500)
+            except Exception as e:
+                return Response({"error": f"License check failed: {str(e)}"}, status=403)
+
+            return func(self, request, *args, **kwargs)
+
+        return wrapper
+    return decorator
+
+def generate_license_request(private_key_file, user, days=30, features='[]'):
+    """
+    呼叫 LICENSE API 生成 license.key 並上傳
+    """
+    files = {"private_key_file": private_key_file}
+    data = {"user": user, "days": days, "features": features}
+
+    # 生成 license
+    r = requests.post(f"{SERVICE_MAP['License']}/generate", files=files, data=data)
+    r.raise_for_status()
+
+    # 上傳 license
+    files_upload = {"file": ("license.key", r.content)}
+    r2 = requests.post(f"{SERVICE_MAP['License']}/upload-license", files=files_upload)
+    r2.raise_for_status()
+
+    return r2.json()
+
+
+def upload_license_request(license_file):
+    """
+    呼叫 LICENSE API 上傳 license.key
+    """
+    files = {"file": license_file}
+    r = requests.post(f"{SERVICE_MAP['License']}/upload-license", files=files)
+    r.raise_for_status()
+    return r.json()
 
 def filter_none(d):
     """過濾掉值為 None 的參數，避免下游收到預設值"""
@@ -640,6 +767,7 @@ def filter_none(d):
 
 class ChatCompletions(APIView):
     """POST /v1/chat/completions"""
+    @check_license(["Chat"])
     def post(self, request):
         payload = request.data  # 完全透傳前端參數
         stream = payload.get("stream", False)
@@ -682,6 +810,7 @@ class ChatCompletions(APIView):
 
 class Embeddings(APIView):
     """POST /v1/embeddings"""
+    @check_license(["Embedding"])
     def post(self, request):
         payload = request.data  # 直接透傳
         model = payload.get("model")
@@ -699,6 +828,7 @@ class Embeddings(APIView):
 
 class SpeechSynthesis(APIView):
     """POST /v1/audio/speech"""
+    @check_license(["TTS"])
     def post(self, request):
         payload = request.data  # 透傳所有參數
         stream = payload.get("stream", False)
@@ -716,6 +846,7 @@ class SpeechSynthesis(APIView):
 
 class CreateSpeaker(APIView):
     """POST /v1/speakers"""
+    @check_license(["TTS"])
     def post(self, request):
         payload = request.data  # 透傳所有參數
         try:
@@ -726,6 +857,7 @@ class CreateSpeaker(APIView):
 
 class Transcriptions(APIView):
     """POST /v1/audio/transcriptions"""
+    @check_license(["STT"])
     def post(self, request):
         payload = request.data  # 完全透傳
         model = payload.get("model")

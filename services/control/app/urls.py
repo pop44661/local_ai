@@ -19,4 +19,6 @@ urlpatterns = [
     path('v1/audio/speech', views.SpeechSynthesis.as_view()),
     path('v1/speakers', views.CreateSpeaker.as_view()),
     path('v1/audio/transcriptions', views.Transcriptions.as_view()),
+    path("license/generate/", views.generate_license_api),
+    path("license/upload/", views.upload_license_api),
 ]

@@ -31,16 +31,19 @@ services:
       - ${TTS_MODEL_PATH}:/app/models/tts
       - ${STT_MODEL_PATH}:/app/models/stt
 
+  license:
+    image: license-server:latest
+    build: ./services/license
+    container_name: license
+    volumes:
+      - ./license.key:/license.key
+
   chat:
     image: vllm/vllm-openai:latest
     container_name: chat
     <<: *gpu-reservation
     volumes:
       - ${CHAT_MODEL_PATH}:/root/.cache/huggingface
-    environment:
-      - HF_HOME=/root/.cache/huggingface
-      - TRANSFORMERS_CACHE=/root/.cache/huggingface
-      - TORCH_HOME=/root/.cache/huggingface
     command:
       [
         "${CHAT_MODEL}",
@@ -58,10 +61,7 @@ services:
     build: ./services/embedding
     <<: *gpu-reservation
     environment:
-      - MODEL_PATH=${EMBEDDING_MODEL_PATH}
-      - HF_HOME=/root/.cache/huggingface
-      - TRANSFORMERS_CACHE=/root/.cache/huggingface
-      - TORCH_HOME=/root/.cache/huggingface
+      - MODEL_PATH=${EMBEDDING_MODEL}
     volumes:
       - ${EMBEDDING_MODEL_PATH}:/root/.cache/huggingface
     profiles: ["embedding"]
@@ -73,11 +73,8 @@ services:
     <<: *gpu-reservation
     environment:
       - PRELOAD_MODELS=${TTS_MODEL}
-      - HF_HOME=/root/.cache/huggingface
-      - TRANSFORMERS_CACHE=/root/.cache/huggingface
-      - TORCH_HOME=/root/.cache/huggingface
     volumes:
-      - ${TTS_MODEL_PATH}:/root/.cache/huggingface
+      - ${TTS_MODEL_PATH}:/workspace/CosyVoice/pretrained_models
       - ${TTS_ASSET_PATH}:/workspace/CosyVoice/asset
     profiles: ["tts"]
 
