@@ -6,6 +6,8 @@ from pydantic import BaseModel
 from typing import List, Union
 from fastapi.responses import JSONResponse
 from transformers import AutoConfig, AutoTokenizer, AutoModel
+import numpy as np
+from typing import List, Union, Optional
 
 try:
     from auto_gptq import AutoGPTQForCausalLM
@@ -14,10 +16,11 @@ except:
     GPTQ_AVAILABLE = False
 
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
+os.environ["HF_HOME"] = "/models"
 
 MODEL_PATH = os.getenv(
     "MODEL_PATH",
-    "ktoprakucar/gte-Qwen2-1.5B-instruct-Q8-GPTQ"
+    "/models/ktoprakucar/gte-Qwen2-1.5B-instruct-Q8-GPTQ"
 )
 
 app = FastAPI(title="Universal Embedding API")
@@ -51,7 +54,12 @@ def mean_pooling(last_hidden_state, attention_mask):
     mask = attention_mask.unsqueeze(-1).expand(last_hidden_state.size()).float()
     return torch.sum(last_hidden_state * mask, 1) / torch.clamp(mask.sum(1), min=1e-9)
 
-def encode(texts: Union[str, List[str]]):
+def encode(texts: Union[str, List[str]], target_dim: int = 0):
+    """
+    將文字轉成向量
+    :param texts: 單字串或字串列表
+    :param target_dim: 如果 >0，輸出會補零或截斷到該維度；0 或 None 表示不補零
+    """
     if isinstance(texts, str):
         texts = [texts]
 
@@ -73,14 +81,26 @@ def encode(texts: Union[str, List[str]]):
         embeddings = mean_pooling(hidden_states, inputs["attention_mask"])
         embeddings = F.normalize(embeddings, p=2, dim=1)
 
-    return embeddings.cpu().numpy()
+    embeddings = embeddings.cpu().numpy()
+
+    # 如果 target_dim > 0 才補零或截斷
+    if target_dim and embeddings.shape[1] != target_dim:
+        if embeddings.shape[1] < target_dim:
+            padding = np.zeros((embeddings.shape[0], target_dim - embeddings.shape[1]), dtype=embeddings.dtype)
+            embeddings = np.concatenate([embeddings, padding], axis=1)
+        else:
+            embeddings = embeddings[:, :target_dim]
+
+    return embeddings
 
 class TextInput(BaseModel):
     text: str
+    dimensions: Optional[int] = None  # 可以選擇性輸入維度
 
 class EmbeddingRequest(BaseModel):
     model: str
     input: Union[str, List[str]]
+    dimensions: Optional[int] = None  # 可選
 
 class EmbeddingObject(BaseModel):
     object: str
@@ -100,7 +120,8 @@ def embeddings(request: EmbeddingRequest):
 
     try:
         texts = request.input if isinstance(request.input, list) else [request.input]
-        vectors = encode(texts)
+        dim = request.dimensions or 0
+        vectors = encode(texts, target_dim=dim)
 
         data = [
             EmbeddingObject(
@@ -136,8 +157,8 @@ def openai_error(message, type_="invalid_request_error", param=None, code=None, 
 @app.post("/embed")
 def embed(input: TextInput):
     try:
-        vectors = encode(input.text)
-
+        dim = input.dimensions or 0
+        vectors = encode(input.text, target_dim=dim)
         embedding = vectors[0]
 
         return {

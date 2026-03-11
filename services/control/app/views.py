@@ -682,7 +682,7 @@ import uuid
 import requests
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from django.http import StreamingHttpResponse, JsonResponse
+from django.http import StreamingHttpResponse, JsonResponse , HttpResponse
 from rest_framework import status
 
 # Docker 內部服務對應 API
@@ -763,41 +763,27 @@ class ChatCompletions(APIView):
     """POST /v1/chat/completions"""
     @check_license(["Chat"])
     def post(self, request):
-        payload = request.data  # 完全透傳前端參數
+        payload = request.data
         stream = payload.get("stream", False)
-        model = payload.get("model")
 
         try:
             r = requests.post(
-                f"{SERVICE_MAP['Chat']}/v1/completions",
+                f"{SERVICE_MAP['Chat']}/v1/chat/completions",
                 json=payload,
                 stream=stream,
-                timeout=300  # 大模型可長一點
+                timeout=300
             )
-
             if stream:
-                # 將每個 chunk 包成 OpenAI SSE JSON 格式
                 def event_stream():
-                    for chunk in r.iter_content(chunk_size=1024):
-                        if not chunk:
-                            continue
-                        yield f"data: {chunk.decode('utf-8')}\n\n"
-                    yield "data: [DONE]\n\n"
+                    for line in r.iter_lines():
+                        if line:
+                            yield line.decode("utf-8") + "\n"
 
-                return StreamingHttpResponse(event_stream(), content_type="text/event-stream")
-
-            # 非 streaming
-            res_json = r.json()
-            text = res_json.get("text", "")
-            resp = {
-                "id": f"chatcmpl-{uuid.uuid4().hex[:8]}",
-                "object": "chat.completion",
-                "model": model,
-                "choices": [
-                    {"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}
-                ],
-            }
-            return Response(resp)
+                return StreamingHttpResponse(
+                    event_stream(),
+                    content_type="text/event-stream"
+                )
+            return Response(r.json(), status=r.status_code)
 
         except requests.exceptions.RequestException as e:
             return Response({"error": str(e)}, status=500)
@@ -806,46 +792,31 @@ class Embeddings(APIView):
     """POST /v1/embeddings"""
     @check_license(["Embedding"])
     def post(self, request):
-        payload = request.data  # 直接透傳
-        model = payload.get("model")
+        payload = request.data
         try:
-            r = requests.post(f"{SERVICE_MAP['Embedding']}/v1/embeddings", json=payload, timeout=120)
-            embedding = r.json().get("embedding", [])
-            resp = {
-                "object": "list",
-                "data": [{"object": "embedding", "embedding": embedding, "index": 0}],
-                "model": model,
-            }
-            return Response(resp)
+            r = requests.post(
+                f"{SERVICE_MAP['Embedding']}/v1/embeddings",
+                json=payload,
+                timeout=120
+            )
+            return Response(r.json(), status=r.status_code)
+
         except requests.exceptions.RequestException as e:
             return Response({"error": str(e)}, status=500)
-
-class SpeechSynthesis(APIView):
-    """POST /v1/audio/speech"""
-    @check_license(["TTS"])
+        
+class Embed(APIView):
+    """POST /embed"""
+    @check_license(["Embedding"])
     def post(self, request):
-        payload = request.data  # 透傳所有參數
-        stream = payload.get("stream", False)
-
         try:
-            r = requests.post(f"{SERVICE_MAP['TTS']}/v1/tts", json=payload, stream=stream, timeout=120)
-            if stream:
-                return StreamingHttpResponse(r.iter_content(chunk_size=4096), content_type="audio/mpeg")
-            else:
-                resp = StreamingHttpResponse(r.content, content_type="audio/mpeg")
-                resp['Content-Disposition'] = 'inline; filename="output.mp3"'
-                return resp
-        except requests.exceptions.RequestException as e:
-            return Response({"error": str(e)}, status=500)
+            r = requests.post(
+                f"{SERVICE_MAP['Embedding']}/embed",
+                json=request.data,
+                timeout=120
+            )
+            r.raise_for_status()
+            return Response(r.json(), status=r.status_code)
 
-class CreateSpeaker(APIView):
-    """POST /v1/speakers"""
-    @check_license(["TTS"])
-    def post(self, request):
-        payload = request.data  # 透傳所有參數
-        try:
-            r = requests.post(f"{SERVICE_MAP['TTS']}/v1/speakers", json=payload, timeout=60)
-            return JsonResponse(r.json())
         except requests.exceptions.RequestException as e:
             return Response({"error": str(e)}, status=500)
 
@@ -853,18 +824,71 @@ class Transcriptions(APIView):
     """POST /v1/audio/transcriptions"""
     @check_license(["STT"])
     def post(self, request):
-        payload = request.data  # 完全透傳
-        model = payload.get("model")
         try:
-            r = requests.post(f"{SERVICE_MAP['STT']}/v1/stt", json=payload, timeout=120)
-            res_json = r.json()
-            text = res_json.get("text", "")
-            resp = {
-                "id": f"transcription-{uuid.uuid4().hex[:8]}",
-                "object": "audio.transcription",
-                "model": model,
-                "text": text,
+            audio = request.FILES.get("file")
+            files = None
+            if audio:
+                files = {
+                    "file": (audio.name, audio, audio.content_type)
+                }
+            data = {
+                k: v for k, v in request.data.items()
+                if k != "file"
             }
-            return Response(resp)
+            r = requests.post(
+                f"{SERVICE_MAP['STT']}/v1/audio/transcriptions",
+                data=data,
+                files=files,
+                timeout=120
+            )
+            return Response(r.json(), status=r.status_code)
+        except requests.exceptions.RequestException as e:
+            return Response({"error": str(e)}, status=500)
+
+class CreateSpeaker(APIView):
+    """POST /v1/speakers"""
+    @check_license(["TTS"])
+    def post(self, request):
+        try:
+            r = requests.post(
+                f"{SERVICE_MAP['TTS']}/v1/speakers",
+                json=request.data,
+                timeout=60
+            )
+            return Response(r.json(), status=r.status_code)
+        except requests.exceptions.RequestException as e:
+            return Response({"error": str(e)}, status=500)
+
+class SpeechSynthesis(APIView):
+    """POST /v1/audio/speech"""
+
+    @check_license(["TTS"])
+    def post(self, request):
+
+        payload = request.data
+        stream = payload.get("stream", False)
+
+        try:
+            r = requests.post(
+                f"{SERVICE_MAP['TTS']}/v1/audio/speech",
+                json=payload,
+                stream=stream,
+                timeout=120
+            )
+
+            if stream:
+                return StreamingHttpResponse(
+                    r.iter_content(chunk_size=4096),
+                    content_type=r.headers.get("Content-Type", "audio/mpeg")
+                )
+
+            resp = HttpResponse(
+                r.content,
+                content_type=r.headers.get("Content-Type", "audio/mpeg")
+            )
+
+            resp["Content-Disposition"] = 'inline; filename="output.mp3"'
+            return resp
+
         except requests.exceptions.RequestException as e:
             return Response({"error": str(e)}, status=500)

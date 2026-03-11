@@ -16,6 +16,7 @@ urlpatterns = [
     path("api/models/select/", views.select_model_api),
     path('v1/chat/completions', views.ChatCompletions.as_view()),
     path('v1/embeddings', views.Embeddings.as_view()),
+    path("embed", views.Embed.as_view()),
     path('v1/audio/speech', views.SpeechSynthesis.as_view()),
     path('v1/speakers', views.CreateSpeaker.as_view()),
     path('v1/audio/transcriptions', views.Transcriptions.as_view()),
