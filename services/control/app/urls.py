@@ -22,4 +22,5 @@ urlpatterns = [
     path('v1/audio/transcriptions', views.Transcriptions.as_view()),
     path("license/generate/", views.generate_license_api),
     path("license/upload/", views.upload_license_api),
+    path("license/verify/", views.verify_license_api),
 ]

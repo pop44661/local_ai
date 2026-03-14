@@ -200,6 +200,22 @@ def upload_license_api(request):
     return JsonResponse({"success": True, "upload_response": result})
 
 
+def verify_license_api(request):
+
+    try:
+        data = verify_license_request()
+
+        return JsonResponse({
+            "success": True,
+            "valid": data.get("valid"),
+            "user": data.get("user"),
+            "start": data.get("start"),
+            "expire": data.get("expire"),
+            "features": data.get("features", [])
+        })
+    except Exception as e:
+        return JsonResponse({"success": False, "error": str(e)}, status=403)
+
 
 
 
@@ -234,7 +250,7 @@ def start_containers(services: str):
         container = all_containers.get(s)
         if container:
             try:
-                container.start()
+                compose_up(s)
                 results.append({"service": s, "success": True, "message": f"{s} 已啟動"})
             except Exception as e:
                 results.append({"service": s, "success": False, "error": str(e)})
@@ -267,6 +283,17 @@ def stop_containers(services: str):
 
     return {"results": results}
 
+def compose_up(service_str: str):
+    if not service_str:
+        raise ValueError("請提供至少一個 service 名稱")
+    services = service_str.split()
+    cmd = ["docker","compose", "up", "-d", "--force-recreate"] + services
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True
+    )
+
 def restart_service(service_name: str):
     """
     使用 docker SDK 重啟 container
@@ -284,8 +311,7 @@ def restart_service(service_name: str):
 
         try:
             service_name = service_name.lower()
-            container = client.containers.get(service_name)
-            container.restart()
+            compose_up(service_name)
         except docker.errors.NotFound:
             return {"success": False, "error": f"{service_name} container 不存在"}
         except Exception as e:
@@ -368,10 +394,15 @@ def sync_container_status(compose_state_path):
 
     return {"success": True, "data": result}
 
+def mb_to_gb(x_mb):
+    """MB 轉 GB"""
+    return round(x_mb / 1024, 1)
+
 def get_gpu_info():
+    print(os.environ("BUILD_DIR"))
     try:
         result = subprocess.run(
-            "nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits",
+            "nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader,nounits",
             shell=True,
             capture_output=True,
             text=True
@@ -382,32 +413,31 @@ def get_gpu_info():
         if not output:
             return {"success": False, "error": "nvidia-smi returned empty output"}
 
+        # 只取第一張 GPU
         line = output.split("\n")[0]
         parts = [x.strip() for x in line.split(",")]
 
-        if len(parts) != 3:
+        if len(parts) != 2:
             return {
                 "success": False,
                 "error": "unexpected output format",
                 "raw": output
             }
 
-        usage, mem_used, mem_total = parts
+        mem_used_mb, mem_total_mb = map(int, parts)
+        mem_used = mb_to_gb(mem_used_mb)
+        mem_total = mb_to_gb(mem_total_mb)
+        percent = round(mem_used_mb / mem_total_mb * 100, 2) if mem_total_mb else 0
 
         return {
             "success": True,
-            "usage": int(usage),
-            "memory_used": int(mem_used),
-            "memory_total": int(mem_total)
+            "memory_used": mem_used,
+            "memory_total": mem_total,
+            "memory_percent": percent
         }
 
     except Exception as e:
         return {"success": False, "error": str(e)}
-    
-def bytes_to_gb(x_mb):
-    """將 MB 轉成 GB，保留一位小數"""
-    return round(x_mb / 1024, 1)
-
 
 def get_container_gpu_stats(compose_state_path):
     # 讀 compose state
@@ -415,66 +445,54 @@ def get_container_gpu_stats(compose_state_path):
         compose_state = json.load(f)
 
     services = [s for s in compose_state if compose_state[s].get("exists")]
+    result = {s.lower(): {"used_mb": 0} for s in services}
 
-    result = {s: {"used_mb": 0} for s in services}
-
-    # 取得 GPU total memory (MB)
+    # 取得 GPU total memory (host 上)
     gpu_total_cmd = "nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits"
-
     gpu_total_proc = subprocess.run(
         gpu_total_cmd, shell=True, capture_output=True, text=True
     )
-
     gpu_total_mb = int(gpu_total_proc.stdout.strip().split("\n")[0])
 
-    # 取得 GPU process
-    cmd = (
-        "nvidia-smi --query-compute-apps=pid,used_memory "
-        "--format=csv,noheader,nounits"
-    )
+    # 取得容器列表
+    containers = client.containers.list()
 
-    proc = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-
-    if proc.returncode != 0:
-        return {"success": False, "error": proc.stderr}
-
-    lines = proc.stdout.strip().split("\n")
-
-    for line in lines:
-        if not line.strip():
-            continue
-
-        pid_str, mem_str = [x.strip() for x in line.split(",")]
-        pid = int(pid_str)
-        mem_mb = int(mem_str)
-
+    for c in containers:
         try:
-            containers = client.containers.list(filters={"pid": pid})
+            name = c.name
+            if name not in result:
+                continue  # 只關注 compose state 內的服務
 
-            if not containers:
+            # 在容器內執行 nvidia-smi
+            cmd = "nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader,nounits"
+            exec_proc = c.exec_run(cmd)
+            output = exec_proc.output.decode("utf-8").strip()
+
+            if not output:
                 continue
 
-            name = containers[0].name
-
-            if name in result:
+            # 累加 GPU memory
+            for line in output.split("\n"):
+                if not line.strip():
+                    continue
+                _, mem_str = [x.strip() for x in line.split(",")]
+                mem_mb = int(mem_str)
                 result[name]["used_mb"] += mem_mb
 
-        except Exception:
+        except Exception as e:
+            print(f"[WARN] {name} exec failed: {e}")
             continue
 
     # 格式化輸出
     formatted = {}
     for service in result:
-        used_gb = bytes_to_gb(result[service]["used_mb"])
-        total_gb = bytes_to_gb(gpu_total_mb)
-        percent = round((result[service]["used_mb"] / gpu_total_mb) * 100, 2) if gpu_total_mb else 0
-
+        used_mb = result[service]["used_mb"]
+        used_gb = mb_to_gb(used_mb)
+        total_gb = mb_to_gb(gpu_total_mb)
+        percent = round((used_mb / gpu_total_mb) * 100, 2) if gpu_total_mb else 0
         formatted[service] = f"{used_gb}GB / {total_gb}GB ({percent}%)"
 
-    return {
-        "success": True,
-        "data": formatted
-    }
+    return {"success": True, "data": formatted}
 
 def get_models_func(file_path, service: str):
     """取得 service 的 model list 與使用中模型"""
@@ -487,102 +505,150 @@ def get_models_func(file_path, service: str):
     except Exception as e:
         return {"success": False, "error": str(e)}
 
-def download_model_func(file_path, service: str, model_name: str):
-    """將 model 加入 list，設定為使用中，並下載到 volume（使用 huggingface_hub API）"""
+def download_model_func(file_path: str, service: str, model_name: str):
+    """
+    將模型加入 list，並下載到 volume
+    """
     try:
-        # 1️⃣ 讀 / 寫 compose_state
+        # 1️⃣ 讀 compose_state
         with open(file_path, "r", encoding="utf-8") as f:
             compose_state = json.load(f)
-        model_list = compose_state.setdefault(service, {}).setdefault("model", {}).setdefault("list", [])
+
+        model_config = compose_state.setdefault(service, {}).setdefault("model", {})
+        model_list = model_config.setdefault("list", [])
+        model_download = model_config.setdefault("download", [])
 
         # 檢查是否已存在
         if model_name in model_list:
-            return {"success": False, "message": f"{model_name} 已經存在於列表中", "list": model_list}
+            return {
+                "success": False,
+                "message": f"{model_name} 已經存在於列表中",
+                "list": model_list
+            }
 
-        # 加入 list 並設定為使用中
+        # 2️⃣ 加入 list 並設定 use
         model_list.append(model_name)
-        compose_state[service]["model"]["list"] = model_list
-        compose_state[service]["model"]["use"] = model_name
+        model_config["list"] = model_list
 
+        # 先寫回（確保 state 先更新）
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(compose_state, f, indent=2)
 
-        # 2️⃣ Hugging Face 下載到 volume
-        base_path = "/app/models"  # Volume 掛載點
+        # 3️⃣ HuggingFace 下載
+        base_path = "/app/models"
         service_folder = os.path.join(base_path, service.lower())
-        os.makedirs(service_folder, exist_ok=True)  # 建資料夾
-        
-        # 下載整個模型 repo（snapshot_download 會自動抓最新 commit）
-        download_model_three_method(service, model_name, service_folder)
+        os.makedirs(service_folder, exist_ok=True)
 
-        return {"success": True, "message": f"{model_name} 已加入列表並下載完成", "list": model_list}
+        success = download_model_three_method(service, model_name, service_folder)
+
+        # 4️⃣ 下載成功才加入 download
+        if success:
+            if model_name not in model_download:
+                model_download.append(model_name)
+                model_config["download"] = model_download
+
+                with open(file_path, "w", encoding="utf-8") as f:
+                    json.dump(compose_state, f, indent=2)
+
+        return {
+            "success": True,
+            "message": f"{model_name} 已加入列表並下載完成",
+            "list": model_list,
+            "download": model_download
+        }
 
     except Exception as e:
         return {"success": False, "error": str(e)}
 
-def download_model_three_method(service,name,dir):
+def download_model_three_method(service, name, dir):
     try:
         if service in ["Chat", "Embedding", "STT"]:
-            local_dir = os.path.join(dir, 'hub')
-            os.environ["HF_HOME"] = dir 
+            local_dir = os.path.join(dir, "hub")
+            os.environ["HF_HOME"] = dir
+
             snapshot_download(
                 repo_id=name,
                 cache_dir=local_dir,
                 local_dir_use_symlinks=False
             )
+
         elif service == "TTS":
             os.environ["HF_HOME"] = dir
             local_dir = os.path.join(dir, name)
+
             snapshot_download(
                 repo_id=name,
                 local_dir=local_dir,
                 local_dir_use_symlinks=False
             )
-    except:
-        return
+
+        return True
+
+    except Exception as e:
+        print(f"[DOWNLOAD ERROR] {service} {name} : {e}")
+        return False
 
 def delete_model_func(file_path, service: str, model_name: str):
-    """刪除 model，使用中模型無法刪除，並移除 volume 內對應資料夾"""
+    """
+    刪除模型：
+    - 使用中模型無法刪除
+    - 刪掉 hub/models--xxx 與 hub/.locks/models--xxx 資料夾
+    - 從 list 和 download 移除
+    """
     try:
+        # 1️⃣ 讀 compose_state
         with open(file_path, "r", encoding="utf-8") as f:
             compose_state = json.load(f)
 
         service_info = compose_state.get(service, {})
         model_info = service_info.get("model", {})
+
         model_list = model_info.get("list", [])
+        model_download = model_info.get("download", [])
 
-        # 1️⃣ 檢查是否正在使用中
+        # 2️⃣ 檢查是否正在使用中
         if model_info.get("use") == model_name:
-            return {"success": False, "message": f"{model_name} 目前正在使用中，無法刪除", "list": model_list}
+            return {
+                "success": False,
+                "message": f"{model_name} 目前正在使用中，無法刪除",
+                "list": model_list
+            }
 
-        # 2️⃣ 刪除 list 中的模型
+        # 3️⃣ 從 list & download 移除
         if model_name in model_list:
             model_list.remove(model_name)
-            compose_state[service]["model"]["list"] = model_list  # 更新 list
+        if model_name in model_download:
+            model_download.remove(model_name)
 
-        # 3️⃣ 刪除 Volume 中的模型資料夾
+        model_info["list"] = model_list
+        model_info["download"] = model_download
+        compose_state[service]["model"] = model_info
+
+        # 4️⃣ 刪除 volume 內模型
         base_path = "/app/models"
         service_folder = os.path.join(base_path, service.lower())
+        hub_folder = os.path.join(service_folder, "hub")
 
         repo_folder = "models--" + model_name.replace("/", "--")
-        model_path = os.path.join(service_folder, repo_folder)
+        model_path = os.path.join(hub_folder, repo_folder)
+        lock_path = os.path.join(hub_folder, ".locks", repo_folder)  # 資料夾
 
-        # 刪模型
         if os.path.exists(model_path):
             shutil.rmtree(model_path)
 
-        # 刪 lock
-        lock_folder = os.path.join(service_folder, ".locks")
-        lock_file = os.path.join(lock_folder, repo_folder + ".lock")
+        if os.path.exists(lock_path):
+            shutil.rmtree(lock_path)
 
-        if os.path.exists(lock_file):
-            os.remove(lock_file)
-
-        # 4️⃣ 寫回 compose_state
+        # 5️⃣ 寫回 compose_state
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(compose_state, f, indent=2)
 
-        return {"success": True, "message": f"{model_name} 已刪除（含 volume 資料）", "list": model_list}
+        return {
+            "success": True,
+            "message": f"{model_name} 已刪除（含 hub/models-- 和 lock 資料夾）",
+            "list": model_list,
+            "download": model_download
+        }
 
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -627,8 +693,6 @@ MODEL_ENV_MAP = {
 
 def set_service_model_func(service: str, model_path: str):
     try:
-        service = service
-
         if service not in MODEL_ENV_MAP:
             return {"success": False, "error": f"未知 service: {service}"}
 
@@ -637,6 +701,7 @@ def set_service_model_func(service: str, model_path: str):
         if not os.path.exists(ENV_FILE):
             return {"success": False, "error": ".env 不存在"}
 
+        # 讀取現有 .env
         with open(ENV_FILE, "r", encoding="utf-8") as f:
             lines = f.readlines()
 
@@ -653,8 +718,12 @@ def set_service_model_func(service: str, model_path: str):
         if not found:
             new_lines.append(f"{env_key}={model_path}\n")
 
+        # 寫回 .env
         with open(ENV_FILE, "w", encoding="utf-8") as f:
             f.writelines(new_lines)
+
+        # **立即更新 Python 運行環境的 env**
+        os.environ[env_key] = model_path
 
         return {
             "success": True,
@@ -750,8 +819,18 @@ def upload_license_request(license_file):
     """
     呼叫 LICENSE API 上傳 license.key
     """
-    files = {"file": license_file}
+    files = {
+            "file": ("license.key", license_file, "application/octet-stream")
+        }
     r = requests.post(f"{SERVICE_MAP['License']}/upload-license", files=files)
+    r.raise_for_status()
+    return r.json()
+
+def verify_license_request():
+    """
+    呼叫 LICENSE API 驗證 license.key
+    """
+    r = requests.get(f"{SERVICE_MAP['License']}/verify")
     r.raise_for_status()
     return r.json()
 
@@ -761,6 +840,7 @@ def filter_none(d):
 
 class ChatCompletions(APIView):
     """POST /v1/chat/completions"""
+
     @check_license(["Chat"])
     def post(self, request):
         payload = request.data
@@ -773,16 +853,29 @@ class ChatCompletions(APIView):
                 stream=stream,
                 timeout=300
             )
-            if stream:
-                def event_stream():
-                    for line in r.iter_lines():
-                        if line:
-                            yield line.decode("utf-8") + "\n"
 
-                return StreamingHttpResponse(
+            if stream:
+
+                def event_stream():
+                    for chunk in r.iter_content(
+                        chunk_size=None,
+                        decode_unicode=True
+                    ):
+                        if chunk:
+                            yield chunk
+
+                response = StreamingHttpResponse(
                     event_stream(),
-                    content_type="text/event-stream"
+                    content_type="text/event-stream",
+                    status=r.status_code
                 )
+
+                response["Cache-Control"] = "no-cache"
+                response["X-Accel-Buffering"] = "no"
+
+                return response
+
+            # 非 streaming
             return Response(r.json(), status=r.status_code)
 
         except requests.exceptions.RequestException as e:
@@ -808,13 +901,13 @@ class Embed(APIView):
     """POST /embed"""
     @check_license(["Embedding"])
     def post(self, request):
+        payload = request.data
         try:
             r = requests.post(
                 f"{SERVICE_MAP['Embedding']}/embed",
-                json=request.data,
+                json=payload,
                 timeout=120
             )
-            r.raise_for_status()
             return Response(r.json(), status=r.status_code)
 
         except requests.exceptions.RequestException as e:
@@ -850,12 +943,35 @@ class CreateSpeaker(APIView):
     @check_license(["TTS"])
     def post(self, request):
         try:
+            default_payload = {
+                "speakers": [
+                    {
+                        "text": "The device would work during the day as well, if you took steps to either block direct sunlightor point it away from the sun.",
+                        "audio_path": "./asset/af_nova.wav",
+                        "spk_name": "af_nova"
+                    },
+                    {
+                        "text": "建築的な統一にもたらされることによって科学的となるのである。",
+                        "audio_path": "./asset/jf_alpha.wav",
+                        "spk_name": "jf_alpha"
+                    },
+                    {
+                        "text": "今夜的月光如此清亮，不做些什么真是浪费。随我一同去月下漫步吧，不许拒绝。",
+                        "audio_path": "./asset/zf_xiaoxiao.wav",
+                        "spk_name": "zf_xiaoxiao"
+                    }
+                ]
+            }
+            payload = request.data
+            if not payload or not payload.get("speakers"):
+                payload = default_payload
             r = requests.post(
                 f"{SERVICE_MAP['TTS']}/v1/speakers",
-                json=request.data,
+                json=payload,
                 timeout=60
             )
             return Response(r.json(), status=r.status_code)
+
         except requests.exceptions.RequestException as e:
             return Response({"error": str(e)}, status=500)
 

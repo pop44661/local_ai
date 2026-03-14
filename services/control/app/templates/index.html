@@ -20,8 +20,18 @@
 <!-- RIGHT -->
 <div id="sidebar">
 
-<div id="nav">
-<h2>Local-AI</h2>
+<div id="nav" style="display: flex; align-items: center; justify-content: space-between;">
+    <h2>Local-AI</h2>
+
+    <!-- 認證 & modal 按鈕 -->
+    <div style="display: flex; align-items: center; gap: 10px;">
+        <span id="authStatus" style="font-size: 14px; color: red;">未認證</span>
+
+        <button class="icon-btn" onclick="openLicenseDialog()">
+            <i class="material-icons">settings</i>
+            <span class="tooltip-text">管理認證</span>
+        </button>
+    </div>
 </div>
 
 <div id="log-panel">
@@ -69,6 +79,38 @@
 </div>
 </div>
 
+
+
+<div id="licenseDialog" class="modal" style="display: none;">
+    <div class="modal-content">
+        <span class="close-btn" onclick="closeLicenseDialog()">&times;</span>
+        <h3>管理認證</h3>
+
+        <!-- 上傳 input + 按鈕 -->
+        <div class="license-upload" style="flex-direction: column; display: flex; gap: 10px;">
+            <div class="license-upload-box" id="licenseDropZone">
+                <input type="file" id="licenseInput" accept=".key">
+                <div class="upload-content">
+                    <p id="licenseText">拖曳 license.key 到這裡<br>或點擊選擇檔案</p>
+                </div>
+            </div>
+
+            <button class="icon-btn" style="margin-bottom: 0px;" onclick="addLicense()">
+                <i class="material-icons">upload</i>
+                <span class="tooltip-text">上傳</span>
+            </button>
+        </div>
+
+        <!-- 認證資訊 -->
+        <div id="authInfo" style="font-size: 14px; color: #333; margin-bottom: 10px;">
+            <p class="status-row"><strong>使用者:</strong> <span id="authUser">未取得</span></p>
+            <p class="status-row"><strong>開始時間:</strong> <span id="authStart">未取得</span></p>
+            <p class="status-row"><strong>到期時間:</strong> <span id="authExpire">未取得</span></p>
+            <p class="status-row"><strong>功能:</strong> <span id="authFeatures">未取得</span></p>
+        </div>
+    </div>
+</div>
+
 <script>
 
 /* ---------------- LOG ---------------- */
@@ -101,8 +143,7 @@ document.getElementById("gpuButton").onclick = async () => {
         return;
     }
 
-    addLog("GPU使用率：" + data.usage + "%");
-    addLog("GPU記憶體：" + data.memory_used + "MB / " + data.memory_total + "MB");
+    addLog("GPU記憶體：" + data.memory_used + "GB / " + data.memory_total + "GB" + " ("+ data.memory_percent +"%)");
 
 };
 
@@ -249,7 +290,7 @@ function renderServiceCard(name) {
 
         <div class="status-row">
           <span class="label">模型：</span>
-          <span class="value">${s.model.use}</span>
+          <span id="${name.toLowerCase()}-model-name"class="value">${s.model.use}</span>
           <button class="icon-btn" onclick="openModelDialog('${name}')">
             <i class="material-icons">edit</i>
             <span class="tooltip-text">設定${name}模型</span>
@@ -298,7 +339,7 @@ function updateAllGPU() {
         .catch(err => console.error(err));
 }
 
-setInterval(updateAllGPU, 3000);
+setInterval(updateAllGPU, 1000);
 
 function checkServiceStatus() {
 
@@ -317,7 +358,7 @@ function checkServiceStatus() {
         .catch(err => console.error(err));
 }
 
-setInterval(checkServiceStatus(), 21000);
+setInterval(checkServiceStatus(), 30000);
 
 async function restartService(service) {
     
@@ -526,8 +567,14 @@ function selectModel(model) {
     .then(res => res.json())
     .then(data => {
         if (data.success) {
-            currentModel = model; // 更新目前模型
-            renderList(); // 重新渲染列表顏色
+            currentModel = model; 
+
+            const spanId = `${currentService.toLowerCase()}-model-name`;
+            const spanEl = document.getElementById(spanId);
+            if (spanEl) {
+                spanEl.textContent = model;
+            }
+            renderList();
             addLog(data.message);
         } else {
             addLog(`錯誤: ${data.error}`);
@@ -573,6 +620,151 @@ function deleteModel(modelName) {
         models = data.list;
         renderList();
         alert(data.message);
+    });
+}
+
+
+
+
+
+
+const dropZone = document.getElementById("licenseDropZone");
+const fileInput = document.getElementById("licenseInput");
+const text = document.getElementById("licenseText");
+
+// 點擊選檔
+dropZone.addEventListener("click", () => {
+    fileInput.click();
+});
+
+// 選擇檔案
+fileInput.addEventListener("change", () => {
+    updateFile(fileInput.files[0]);
+});
+
+// 拖曳事件
+dropZone.addEventListener("dragover", e => {
+    e.preventDefault();
+    dropZone.classList.add("dragover");
+});
+
+dropZone.addEventListener("dragleave", () => {
+    dropZone.classList.remove("dragover");
+});
+
+dropZone.addEventListener("drop", e => {
+    e.preventDefault();
+    dropZone.classList.remove("dragover");
+
+    const file = e.dataTransfer.files[0];
+    if (!file) return;
+
+    fileInput.files = e.dataTransfer.files;
+    updateFile(file);
+});
+
+// 更新顯示
+function updateFile(file) {
+
+    if (!file.name.endsWith(".key")) {
+        alert("請上傳 .key 檔案");
+        return;
+    }
+
+    text.innerHTML = `
+        <b>${file.name}</b><br>
+        點擊重新選擇
+    `;
+
+    dropZone.classList.add("license-selected");
+}
+
+function openLicenseDialog() {
+    document.getElementById("licenseDialog").style.display = "flex";
+    fetchAuthInfo(); // 打開時更新認證資訊
+}
+
+function closeLicenseDialog() {
+    document.getElementById("licenseDialog").style.display = "none";
+}
+
+fetchAuthInfo()
+
+function addLicense() {
+    const inputEl = document.getElementById("licenseInput");
+    const file = inputEl.files[0];
+
+    if (!file) return alert("請選擇 License 檔案 (.key)");
+
+    if (!file.name.endsWith(".key")) {
+        return alert("請上傳 .key 檔案");
+    }
+
+    const formData = new FormData();
+    formData.append("file", file); // 要和 Django request.FILES.get("file") 一致
+
+    fetch("/license/upload/", {
+        method: "POST",
+        body: formData
+    })
+    .then(res => res.json())
+    .then(data => {
+
+        if (!data.success) {
+            alert(`上傳失敗: ${data.error}`);
+            return;
+        }
+
+        alert(`已上傳 License: ${file.name}`);
+        inputEl.value = "";
+
+        // 上傳成功後取得驗證資訊
+        fetchAuthInfo();
+
+    })
+    .catch(err => {
+        console.error(err);
+        alert("上傳發生錯誤");
+    });
+}
+
+function fetchAuthInfo() {
+
+    fetch("/license/verify/")
+    .then(res => res.json())
+    .then(data => {
+        console.log(data)
+        if (!data.valid) {
+            document.getElementById("authStatus").textContent = "未認證";
+            document.getElementById("authStatus").style.color = "red";
+
+            document.getElementById("authUser").textContent = "未取得";
+            document.getElementById("authStart").textContent = "未取得";
+            document.getElementById("authExpire").textContent = "未取得";
+            document.getElementById("authFeatures").textContent = "未取得";
+            return;
+        }
+
+        document.getElementById("authStatus").textContent = "已認證";
+        document.getElementById("authStatus").style.color = "green";
+
+        document.getElementById("authUser").textContent = data.user;
+        document.getElementById("authStart").textContent = data.start;
+        document.getElementById("authExpire").textContent = data.expire;
+        document.getElementById("authFeatures").textContent = data.features.join(", ");
+
+    })
+    .catch(err => {
+
+        document.getElementById("authStatus").textContent = "未認證";
+        document.getElementById("authStatus").style.color = "red";
+
+        document.getElementById("authUser").textContent = "未取得";
+        document.getElementById("authStart").textContent = "未取得";
+        document.getElementById("authExpire").textContent = "未取得";
+        document.getElementById("authFeatures").textContent = "未取得";
+
+        console.error(err);
     });
 }
 </script>

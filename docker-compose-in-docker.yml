@@ -1,45 +1,7 @@
-#docker compose up -d --build
-
-#docker compose --profile chat --profile embedding --profile tts --profile stt  up -d
-
-x-gpu-reservation: &gpu-reservation
-  deploy:
-    resources:
-      reservations:
-        devices:
-          - driver: nvidia
-            count: 1
-            capabilities: [gpu]
+#給docker內部使用
 
 name: local_ai
 services:
-
-  control:
-    image: control-plane:latest
-    container_name: control
-    runtime: nvidia
-    build: ./services/control
-    ports:
-      - "${CONTROL_PORT}:${CONTROL_PORT}"
-    env_file:
-      - .env
-    volumes:
-      - ${IN_DOCKER_USE_DOCKER}
-      - ${COMPOSE_PATH}:/app/docker-compose.yml
-      - ${ENV_PATH}:/app/.env
-      - ${COMPOSE_STATE_PATH}:/app/app/static/app/compose_state.json
-      - ${CHAT_MODEL_PATH}:/app/models/chat
-      - ${EMBEDDING_MODEL_PATH}:/app/models/embedding
-      - ${TTS_MODEL_PATH}:/app/models/tts
-      - ${STT_MODEL_PATH}:/app/models/stt
-
-  license:
-    image: license-server:latest
-    build: ./services/license
-    container_name: license
-    volumes:
-      - ./license.key:/license.key
-
   chat:
     image: vllm/vllm-openai:latest
     container_name: chat
@@ -60,7 +22,6 @@ services:
   embedding:
     image: embedding-openai:latest
     container_name: embedding
-    build: ./services/embedding
     <<: *gpu-reservation
     environment:
       - MODEL_PATH=${EMBEDDING_MODEL}
@@ -71,7 +32,6 @@ services:
   tts:
     image: cosyvoice-openai:latest
     container_name: tts
-    build: ./services/tts
     <<: *gpu-reservation
     environment:
       - PRELOAD_MODELS=${TTS_MODEL}
@@ -83,7 +43,6 @@ services:
   stt:
     image: fasterwhisper-openai:latest
     container_name: stt
-    build: ./services/stt
     <<: *gpu-reservation
     environment:
       - WHISPER__MODEL=${STT_MODEL}
