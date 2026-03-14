@@ -7,7 +7,7 @@ services:
     container_name: chat
     <<: *gpu-reservation
     volumes:
-      - ${CHAT_MODEL_PATH}:/root/.cache/huggingface
+      - ${CHAT_MODEL_PATH_IN_CONTROL}:/root/.cache/huggingface
     command:
       [
         "${CHAT_MODEL}",
@@ -26,7 +26,7 @@ services:
     environment:
       - MODEL_PATH=${EMBEDDING_MODEL}
     volumes:
-      - ${EMBEDDING_MODEL_PATH}:/root/.cache/huggingface
+      - ${EMBEDDING_MODEL_PATH_IN_CONTROL}:/root/.cache/huggingface
     profiles: ["embedding"]
 
   tts:
@@ -36,8 +36,8 @@ services:
     environment:
       - PRELOAD_MODELS=${TTS_MODEL}
     volumes:
-      - ${TTS_MODEL_PATH}:/workspace/CosyVoice/pretrained_models
-      - ${TTS_ASSET_PATH}:/workspace/CosyVoice/asset
+      - ${TTS_MODEL_PATH_IN_CONTROL}:/workspace/CosyVoice/pretrained_models
+      - ${TTS_ASSET_PATH_IN_CONTROL}:/workspace/CosyVoice/asset
     profiles: ["tts"]
 
   stt:
@@ -45,7 +45,7 @@ services:
     container_name: stt
     <<: *gpu-reservation
     environment:
-      - WHISPER__MODEL=${STT_MODEL}
+      - WHISPER__MODEL=${STT_MODEL_IN_CONTROL}
     volumes:
       - ${STT_MODEL_PATH}:/root/.cache/huggingface
     profiles: ["stt"]

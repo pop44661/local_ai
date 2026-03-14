@@ -20,4 +20,7 @@ COPY . .
 
 ENV PYTHONUNBUFFERED=1
 
+ARG BUILD_DIR
+ENV BUILD_DIR=${BUILD_DIR}
+
 CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]

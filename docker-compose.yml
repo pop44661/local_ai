@@ -1,3 +1,7 @@
+# windows: $env:PWD = (Get-Location) 
+#         (刪掉變數 Remove-Item Env:PWD，查看變數 Get-ChildItem Env: )
+# linux有內建PWD，不用建立變數
+
 #docker compose up -d --build
 
 #docker compose --profile chat --profile embedding --profile tts --profile stt  up -d
@@ -18,7 +22,13 @@ services:
     image: control-plane:latest
     container_name: control
     runtime: nvidia
-    build: ./services/control
+    build:
+      context: ./services/control
+      dockerfile: Dockerfile
+      args:
+        BUILD_DIR: ${PWD} 
+    environment:
+      - BUILD_DIR=${PWD}
     ports:
       - "${CONTROL_PORT}:${CONTROL_PORT}"
     env_file:
