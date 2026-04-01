@@ -1,0 +1,112 @@
+# windows: $env:PWD = (Get-Location) 
+#         (刪掉變數 Remove-Item Env:PWD，查看變數 Get-ChildItem Env: )
+# linux有內建PWD，不用建立變數
+
+#docker compose up -d --build
+
+#docker compose --profile chat --profile embedding --profile tts --profile stt  up -d
+
+name: local_ai
+services:
+
+  control:
+    image: ghcr.io/pop44661/local_ai-control-plane:latest
+    container_name: control
+    runtime: nvidia
+    #build: ./services/control
+    ports:
+      - "${CONTROL_PORT}:${CONTROL_PORT}"
+    env_file:
+      - .env
+    volumes:
+      - ${IN_DOCKER_USE_DOCKER}
+      - ${COMPOSE_PATH}:/app/docker-compose.yml
+      - ${ENV_PATH}:/app/.env
+      - ${COMPOSE_STATE_PATH}:/app/app/static/app/compose_state.json
+      - ${CHAT_MODEL_PATH}:/app/models/chat
+      - ${EMBEDDING_MODEL_PATH}:/app/models/embedding
+      - ${TTS_MODEL_PATH}:/app/models/tts
+      - ${STT_MODEL_PATH}:/app/models/stt
+
+  license:
+    image: ghcr.io/pop44661/local_ai-license-server:latest
+    #build: ./services/license
+    container_name: license
+    volumes:
+      - ./license.key:/license.key
+
+  chat:
+    image: vllm/vllm-openai:latest
+    container_name: chat
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${CHAT_GPU_ID:-0}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+    volumes:
+      - ${CHAT_MODEL_PATH}:/root/.cache/huggingface
+    command:
+      [
+        "${CHAT_MODEL}",
+        "--gpu-memory-utilization", "${CHAT_GPU_UTIL}",
+        "--enable-chunked-prefill",
+        "--dtype", "float16",
+        "--disable-frontend-multiprocessing",
+        "--trust-remote-code"
+      ]
+    profiles: ["chat"]
+
+  embedding:
+    image: embedding-openai:latest
+    container_name: embedding
+    build: ./services/embedding
+    environment:
+      - MODEL_PATH=${EMBEDDING_MODEL}
+      - NVIDIA_VISIBLE_DEVICES=${EMBEDDING_GPU_ID:-0}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+    volumes:
+      - ${EMBEDDING_MODEL_PATH}:/root/.cache/huggingface
+    profiles: ["embedding"]
+
+  tts:
+    image: cosyvoice-openai:latest
+    container_name: tts
+    build: ./services/tts
+    environment:
+      - PRELOAD_MODELS=${TTS_MODEL}
+      - NVIDIA_VISIBLE_DEVICES=${TTS_GPU_ID:-0}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+    volumes:
+      - ${TTS_MODEL_PATH}:/workspace/CosyVoice/pretrained_models
+      - ${TTS_ASSET_PATH}:/workspace/CosyVoice/asset
+    profiles: ["tts"]
+
+  stt:
+    image: fasterwhisper-openai:latest
+    container_name: stt
+    build: ./services/stt
+    environment:
+      - WHISPER__MODEL=${STT_MODEL_IN_CONTROL}
+      - NVIDIA_VISIBLE_DEVICES=${STT_GPU_ID:-0}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+    volumes:
+      - ${STT_MODEL_PATH}:/root/.cache/huggingface
+    profiles: ["stt"]

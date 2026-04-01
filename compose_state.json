@@ -1,0 +1,46 @@
+{
+  "Chat": {
+    "exists": false,
+    "running": false,
+    "model": {
+      "list": [],
+      "download": [],
+      "use": "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int8"
+    },
+    "gpu": "0",
+    "gpu_util": "0.6"
+  },
+  "Embedding": {
+    "exists": false,
+    "running": false,
+    "model": {
+      "list": [],
+      "download": [],
+      "use": "infly/inf-retriever-v1-1.5b"
+    },
+    "gpu": "0",
+    "gpu_util": null
+  },
+  "STT": {
+    "exists": false,
+    "running": false,
+    "model": {
+      "list": [],
+      "download": [],
+      "use": "Systran/faster-distil-whisper-large-v3"
+    },
+    "gpu": "0",
+    "gpu_util": null
+  },
+  "TTS": {
+    "exists": false,
+    "running": false,
+    "model": {
+      "list": [],
+      "download": [],
+      "use": "FunAudioLLM/CosyVoice2-0.5B"
+    },
+    "gpu": "0",
+    "gpu_util": null
+  }
+}

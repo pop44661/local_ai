@@ -1,0 +1,12 @@
+#私鑰
+private.pem
+
+#本地端
+license_local.key
+compose_state_local.json
+docker-compose-local.yml
+docker-compose-local-in-docker.yml
+
+#資料夾
+services/control
+services/license
