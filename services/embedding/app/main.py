@@ -1,7 +1,7 @@
 import os
 import torch
 import torch.nn.functional as F
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel
 from typing import List, Union
 from fastapi.responses import JSONResponse
@@ -168,3 +168,8 @@ def embed(input: TextInput):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/health")
+def health():
+    return Response(status_code=200, content="OK")

@@ -1,6 +1,6 @@
 FROM nvidia/cuda:12.8.0-cudnn-runtime-ubuntu22.04
 
-RUN apt-get update && apt-get install -y git ffmpeg software-properties-common && \
+RUN apt-get update && apt-get install -y git ffmpeg curl software-properties-common && \
     add-apt-repository ppa:deadsnakes/ppa && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3.12 python3-distutils && \
     apt-get clean && rm -rf /var/lib/apt/lists/*

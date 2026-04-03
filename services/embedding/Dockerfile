@@ -5,7 +5,7 @@ ENV PYTHONUNBUFFERED=1
 
 # ---- system deps ----
 RUN apt-get update && apt-get install -y \
-    python3 python3-pip git git-lfs ca-certificates \
+    python3 python3-pip git git-lfs ca-certificates curl \
     && git lfs install \
     && rm -rf /var/lib/apt/lists/*
 

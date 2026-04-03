@@ -34,6 +34,12 @@ services:
     container_name: license
     volumes:
       - ./license.key:/license.key
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
 
   chat:
     image: vllm/vllm-openai:latest
@@ -57,6 +63,12 @@ services:
         "--disable-frontend-multiprocessing",
         "--trust-remote-code"
       ]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 15
+      start_period: 60s
     profiles: ["chat"]
 
   embedding:
@@ -74,6 +86,12 @@ services:
               capabilities: [gpu]
     volumes:
       - ${EMBEDDING_MODEL_PATH}:/root/.cache/huggingface
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     profiles: ["embedding"]
 
   tts:
@@ -92,6 +110,12 @@ services:
     volumes:
       - ${TTS_MODEL_PATH}:/workspace/CosyVoice/pretrained_models
       - ${TTS_ASSET_PATH}:/workspace/CosyVoice/asset
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+      start_period: 45s
     profiles: ["tts"]
 
   stt:
@@ -109,4 +133,10 @@ services:
               capabilities: [gpu]
     volumes:
       - ${STT_MODEL_PATH}:/root/.cache/huggingface
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     profiles: ["stt"]

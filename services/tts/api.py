@@ -264,6 +264,9 @@ def make_spks():
         "errors": errors
     }), 200
 
+@app.route('/health', methods=['GET'])
+def health():
+    return "OK", 200
 
 # --- Main Execution ---
 if __name__ == '__main__':

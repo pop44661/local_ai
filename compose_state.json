@@ -1,7 +1,7 @@
 {
   "Chat": {
     "exists": false,
-    "running": false,
+    "status": false,
     "model": {
       "list": [],
       "download": [],
@@ -12,7 +12,7 @@
   },
   "Embedding": {
     "exists": false,
-    "running": false,
+    "status": false,
     "model": {
       "list": [],
       "download": [],
@@ -23,7 +23,7 @@
   },
   "STT": {
     "exists": false,
-    "running": false,
+    "status": false,
     "model": {
       "list": [],
       "download": [],
@@ -34,7 +34,7 @@
   },
   "TTS": {
     "exists": false,
-    "running": false,
+    "status": false,
     "model": {
       "list": [],
       "download": [],
